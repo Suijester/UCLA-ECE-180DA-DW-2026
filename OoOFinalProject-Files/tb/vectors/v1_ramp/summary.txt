@@ -1,0 +1,9 @@
+vector        : v1_ramp
+seed          : 2
+image         : ramp
+image offset  : 0x000
+shift1,shift2 : 8, 8
+conv1 out     : 1524/1728 nonzero, 0 saturated
+conv2 out     : 97/192 nonzero, 0 saturated
+logits        : [-4291, 7757, 784, 18202, 11765, -12806, 15444, -20603, 11689, 397]
+predicted     : 3

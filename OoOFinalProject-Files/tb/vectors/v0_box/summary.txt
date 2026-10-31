@@ -1,0 +1,9 @@
+vector        : v0_box
+seed          : 1
+image         : box
+image offset  : 0x000
+shift1,shift2 : 8, 7
+conv1 out     : 1038/1728 nonzero, 0 saturated
+conv2 out     : 130/192 nonzero, 0 saturated
+logits        : [-4728, 8736, 3185, 15256, 11063, 24758, 3328, 26541, -8640, 2065]
+predicted     : 7

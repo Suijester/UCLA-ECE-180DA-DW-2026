@@ -1,0 +1,9 @@
+vector        : v3_zeros
+seed          : 4
+image         : zeros
+image offset  : 0x000
+shift1,shift2 : 4, 4
+conv1 out     : 576/1728 nonzero, 0 saturated
+conv2 out     : 64/192 nonzero, 64 saturated
+logits        : [5961, 32319, 35877, -34425, -10038, -15411, -37635, -24420, 8154, 52359]
+predicted     : 9

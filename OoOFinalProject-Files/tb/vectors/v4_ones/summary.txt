@@ -1,0 +1,9 @@
+vector        : v4_ones
+seed          : 19
+image         : ones
+image offset  : 0x000
+shift1,shift2 : 7, 8
+conv1 out     : 1728/1728 nonzero, 0 saturated
+conv2 out     : 192/192 nonzero, 0 saturated
+logits        : [-9170, 10844, 17138, 7639, -5558, -5340, 21130, 15782, 7338, 5295]
+predicted     : 6

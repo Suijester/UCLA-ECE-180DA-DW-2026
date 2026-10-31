@@ -1,0 +1,9 @@
+vector        : v5_offset
+seed          : 6
+image         : stripe
+image offset  : 0x400
+shift1,shift2 : 7, 8
+conv1 out     : 864/1728 nonzero, 0 saturated
+conv2 out     : 104/192 nonzero, 0 saturated
+logits        : [-27025, -16996, 8501, 20507, -18338, -8629, -4580, -14819, 32466, 12140]
+predicted     : 8

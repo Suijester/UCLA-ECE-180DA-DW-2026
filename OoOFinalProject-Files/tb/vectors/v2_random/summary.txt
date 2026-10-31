@@ -1,0 +1,9 @@
+vector        : v2_random
+seed          : 3
+image         : random
+image offset  : 0x000
+shift1,shift2 : 8, 8
+conv1 out     : 1239/1728 nonzero, 2 saturated
+conv2 out     : 190/192 nonzero, 0 saturated
+logits        : [-16886, 11954, -7615, 27353, -34320, 11246, -6591, 7066, -25178, -14147]
+predicted     : 3
