@@ -1,4 +1,3 @@
-// Backend <-> LSU: one ready, non-speculative ROB-head operation at a time.
 
 
 interface backend_memory_if;
