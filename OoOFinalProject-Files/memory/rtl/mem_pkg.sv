@@ -55,7 +55,7 @@ package mem_pkg;
 
     // cache line standard packaging
     typedef struct packed {
-        line_addr_t addr;
+        line_addr_t line_addr;
         line_data_t data;
         logic dirty;
         logic reuse;
