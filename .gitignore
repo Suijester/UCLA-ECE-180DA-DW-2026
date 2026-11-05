@@ -1,0 +1,13 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Cocotb simulation outputs
+sim_build/
+results.xml
+__pycache__/
+*.pyc
+
+# Waveforms
+*.vcd
+*.fst
