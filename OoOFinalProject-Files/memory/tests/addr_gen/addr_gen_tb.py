@@ -30,7 +30,7 @@ async def check_agu(
     dut.access_size.value = size
 
     # Allow combinational logic to settle
-    await Timer(1, unit="ns")
+    await Timer(1, units="ns")
 
     assert int(dut.word_addr.value) == expected_addr, (
         f"word_addr: expected {expected_addr:#x}, "
