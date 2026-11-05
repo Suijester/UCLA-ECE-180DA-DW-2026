@@ -15,13 +15,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python
+      # 2. Set up Python 3.11
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # 3. Install Verilator from Ubuntu packages
+      # 3. Install Verilator
       - name: Install Verilator
         run: |
           sudo apt-get update
@@ -34,8 +34,19 @@ jobs:
           python -m pip install "cocotb==1.9.2"
           cocotb-config --version
 
-      # 5. Run AGU tests
+      # 5. Debug Python environment
+      - name: Debug Python environment
+        run: |
+          python --version
+          which python
+          which verilator
+          python -c "import encodings; print(encodings.__file__)"
+          env | grep -E '^(PYTHONHOME|PYTHONPATH)=' || true
+
+      # 6. Run AGU tests
       - name: Run AGU Cocotb tests
         working-directory: OoOFinalProject-Files/memory/tests/addr_gen
         run: |
+          unset PYTHONHOME
+          unset PYTHONPATH
           make SIM=verilator
