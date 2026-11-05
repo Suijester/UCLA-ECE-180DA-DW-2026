@@ -1,4 +1,4 @@
-import rv32_ooo_pkg::*
+import rv32_ooo_pkg::*;
 
 // address-generation unit
 // computes addresses from instructions and source registers, etc.
@@ -12,12 +12,12 @@ module address_gen (
     output logic [1:0] byte_offset,         // byte-level access
     output logic [3:0] bytes_accessed,      // 0011 accesses first half, 1000 accesses last byte, etc. (identifies size of access, e.g. sh/sw/lh/lw)
     output logic [XLEN-1:0] store_data,     // provides data for store ops
-    output logic misaligned_access,
+    output logic misaligned_access
 );
     logic [XLEN-1:0] immediate;
     assign immediate = issue_uop.decoded.immediate;
 
-    logic mem_size_e access_size;
+    mem_size_e access_size;
     assign access_size = issue_uop.decoded.mem_size;
 
     logic [XLEN-1:0] byte_addr;

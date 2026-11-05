@@ -1,3 +1,4 @@
+
 SIM ?= verilator
 TOPLEVEL_LANG = verilog
 
@@ -11,6 +12,7 @@ VERILOG_SOURCES = \
     $(TEST_DIR)addr_gen_tb_wrapper.sv
 
 TOPLEVEL = addr_gen_tb_wrapper
-COCOTB_TEST_MODULES = addr_gen_tb
+
+MODULE = addr_gen_tb
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

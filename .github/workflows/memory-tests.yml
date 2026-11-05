@@ -15,64 +15,38 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python
+      # 2. Set up Python 3.12
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # 3. Install Verilator build dependencies
-      - name: Install Verilator dependencies
+      # 3. Install Verilator
+      - name: Install Verilator
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            git make g++ autoconf flex bison \
-            libfl-dev libgoogle-perftools-dev \
-            perl python3
-
-      # 4. Restore cached Verilator installation
-      - name: Cache Verilator
-        id: verilator-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/verilator-install
-          key: verilator-5.040-ubuntu-24.04-v1
-
-      # 5. Build only if Verilator is not cached
-      - name: Build and install Verilator
-        if: steps.verilator-cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch v5.040 \
-            https://github.com/verilator/verilator.git /tmp/verilator
-
-          cd /tmp/verilator
-          autoconf
-
-          ./configure \
-            --prefix="${{ runner.temp }}/verilator-install"
-
-          make -j2
-          make install
-
-      # 6. Configure Verilator environment
-      - name: Configure Verilator
-        run: |
-          echo "${{ runner.temp }}/verilator-install/bin" >> "$GITHUB_PATH"
-          echo "VERILATOR_ROOT=${{ runner.temp }}/verilator-install/share/verilator" >> "$GITHUB_ENV"
-
-      # 7. Verify Verilator version
-      - name: Check Verilator version
-        run: |
+          sudo apt-get install -y verilator make g++
           verilator --version
 
-      # 8. Install Cocotb
+      # 4. Install Cocotb 1.9.2
       - name: Install Cocotb
         run: |
-          python -m pip install "cocotb>=2.0,<3"
+          python -m pip install "cocotb==1.9.2"
           cocotb-config --version
 
-      # 9. Run AGU tests
+      # 5. Debug Python environment
+      - name: Debug Python environment
+        run: |
+          python --version
+          which python
+          which verilator
+          python -c "import encodings; print(encodings.__file__)"
+          env | grep -E '^(PYTHONHOME|PYTHONPATH)=' || true
+
+      # 6. Run AGU tests
       - name: Run AGU Cocotb tests
         working-directory: OoOFinalProject-Files/memory/tests/addr_gen
         run: |
+          unset PYTHONHOME
+          unset PYTHONPATH
           make SIM=verilator
