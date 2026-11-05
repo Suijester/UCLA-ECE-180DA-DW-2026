@@ -46,30 +46,70 @@ module l1_cache (
     output line_pkd_t victim_line 
 );
 
-    // instantiated L1 cache (indexed by ways -> sets for BRAM mapping)
+    // BRAM-mapped L1 cache (ways -> sets indexing)
     line_data_t l1_data [L1_WAYS][L1_SETS];
 
-    // flop arrays of data
+    // flop array (need to perform 4 tag compares in one cycle)
+    logic [L1_TAG_BITS-1:0] l1_tags [L1_SETS][L1_WAYS];
+
     logic [L1_WAYS-1:0] l1_valid [L1_SETS];
     logic [L1_WAYS-1:0] l1_dirty [L1_SETS];
     logic [L1_WAYS-1:0] l1_reuse [L1_SETS];
 
-    // flop array (need to perform 4 tag compares in one cycle, so flops are easy)
-    logic [L1_TAG_BITS-1:0] l1_tags [L1_SETS][L1_WAYS];
-
     logic [L1_TAG_BITS-1:0] req_tag;
     assign req_tag = req_word_addr[XLEN-1 -: L1_TAG_BITS];
+
+    logic [L1_INDEX_BITS-1:0] req_index;
+    assign req_index = req_word_addr[OFFSET_BITS +: L1_INDEX_BITS];
+
+    logic [WORD_SEL_BITS-1:0] req_word_index;
+    assign req_word_index = req_word_addr[2 +: WORD_SEL_BITS];
+
+    logic tag_hit;
+    l1_way_ptr_t tag_hit_way;
+
+    always_comb begin : L1_TAG_COMPARISON
+        tag_hit = 1'b0;
+        tag_hit_way = '0;
+
+        for (int i = 0; i < L1_WAYS; i++) begin
+            if (l1_valid[req_index][i] && (l1_tags[req_index][i] == req_tag)) begin
+                tag_hit = 1'b1;
+                tag_hit_way = l1_way_ptr_t'(i);
+            end
+        end
+    end
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
 
         end else begin
+            resp_valid <= 1'b0;
+            resp_hit <= 1'b0;
+
+            miss_valid <= 1'b0;
+
             // handle request
             if (req_valid && req_ready) begin
+                resp_valid <= 1'b1;
 
                 // load request
                 if (!req_is_store) begin
 
+                    // cache hit (resp_read_data bram access is handled in other block)
+                    if (tag_hit) begin
+                        resp_hit <= 1'b1;
+                        resp_valid <= 1'b1;
+                        resp_is_store <= 1'b0;
+
+                        resp_ld_id <= req_ld_id;
+                        resp_st_id <= req_st_id;
+                    end 
+                    
+                    // todo: figure out miss handling
+                    else if (miss_ready) begin
+
+                    end
                 end
                 
                 // store request
@@ -80,7 +120,7 @@ module l1_cache (
         end
     end
 
-    // bram handler
+    // bram handler (vendor blocks don't support reset)
     always_ff @(posedge clk) begin
         
     end

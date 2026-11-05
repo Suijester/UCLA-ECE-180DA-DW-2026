@@ -48,6 +48,8 @@ package mem_pkg;
     typedef logic [$clog2(SQ_SIZE):0] st_ptr_t;
 
     typedef logic [$clog2(MSHR_COUNT)-1:0] mshr_id_t;
+    typedef logic [$clog2(L1_WAYS)-1:0] l1_way_ptr_t;
+    typedef logic [$clog2(L2_WAYS)-1:0] l2_way_ptr_t;
     
     // store set typedefs
     typedef logic [$clog2(SSIT_SIZE)-1:0] ssit_ptr_t; // SSIT indexing bits
