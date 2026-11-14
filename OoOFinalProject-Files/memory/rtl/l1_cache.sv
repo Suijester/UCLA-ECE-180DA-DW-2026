@@ -58,7 +58,7 @@ module l1_cache (
 
     logic [L1_WAYS-1:0] l1_valid [L1_SETS];
     logic [L1_WAYS-1:0] l1_dirty [L1_SETS];
-    logic [L1_WAYS-1:0] l1_reuse [L1_SETS];
+    logic [L1_WAYS-1:0] l1_reuse [L1_SETS]; // for interval prediction
 
     // generate tag, index bits from address
     logic [L1_TAG_BITS-1:0] req_tag;
@@ -119,7 +119,7 @@ module l1_cache (
     end
 
     // miss logic
-    assign miss_valid = !tag_hit;
+    assign miss_valid = !fill_valid && !tag_hit && req_valid;
     assign miss_line_addr = req_word_addr >> OFFSET_BITS;
     assign miss_critical_word = req_word_index;
     assign miss_is_store = req_is_store;
@@ -128,16 +128,14 @@ module l1_cache (
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             resp_valid <= 1'b0;
-            miss_valid <= 1'b0;
             
-            for (int i = 0; i < L1_SETS; i++) begin : CLEAR_L1_VALID
+            for (int i = 0; i < L1_SETS; i++) begin : clear_l1_valid
                 l1_valid[i] <= '0;
             end
 
         end else begin
             resp_valid <= 1'b0;
             resp_hit <= 1'b0;
-            miss_valid <= 1'b0;
 
             // handle request
             if (req_valid && req_ready) begin
