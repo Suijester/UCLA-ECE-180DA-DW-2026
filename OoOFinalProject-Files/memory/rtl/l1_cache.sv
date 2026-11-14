@@ -50,8 +50,9 @@ module l1_cache (
     // BRAM-mapped L1 cache (ways -> sets indexing)
     line_data_t l1_data [L1_WAYS][L1_SETS];
 
-    // every cycle, read out the request's index for each way
+    // every cycle, read out the request's or fill's index for each way
     line_data_t l1_rd_out_data [L1_WAYS];
+    logic victim_data_read;
 
     // flop array (need to perform 4 tag compares in one cycle)
     logic [L1_TAG_BITS-1:0] l1_tags [L1_SETS][L1_WAYS];
@@ -103,17 +104,37 @@ module l1_cache (
     logic [L1_TAG_BITS-1:0] fill_tag;
     assign fill_tag = fill_line.line_addr[L1_INDEX_BITS +: L1_TAG_BITS];
 
-    l1_way_ptr_t victim_way;
+    // accept fill either when there's no victim to eject, or we've finished reading out the victim into eviction buffer
+    assign fill_ready = ~(&l1_valid[fill_index]) || (victim_data_read && victim_ready);
 
-    // todo: change the logic later
-    assign fill_ready = ~(&l1_valid[fill_index]);
+    // victim-handler
+    l1_way_ptr_t victim_way, invalid_way, plru_victim_way;
 
-    // todo: replace w/ tree plru logic
+    assign victim_valid = victim_data_read;
+    assign victim_line.dirty = l1_dirty[fill_index][victim_way];
+    assign victim_line.reuse = l1_reuse[fill_index][victim_way];
+    assign victim_line.line_addr = {l1_tags[fill_index][victim_way], fill_index};
+    assign victim_line.data = l1_rd_out_data[victim_way];
+
+    // prioritize first invalid way until set is full
+    assign victim_way = (&l1_valid[fill_index]) ? plru_victim_way : invalid_way;
+
+    tree_plru replacement_policy (
+        .clk(clk), .rst_n(rst_n),
+
+        .cache_touched((tag_hit && req_valid && req_ready) || (fill_valid && fill_ready)),
+        .set_touched((fill_valid && fill_ready) ? fill_index : req_index),
+        .way_touched((fill_valid && fill_ready) ? victim_way : tag_hit_way),
+
+        .victim_set(fill_index),
+        .victim_way(plru_victim_way)
+    );
+
     always_comb begin
-        victim_way = 0;
+        invalid_way = 0;
         for (int i = L1_WAYS - 1; i >= 0; i--) begin : find_victim_temp
             if (l1_valid[fill_index][i] == 0) begin
-                victim_way = l1_way_ptr_t'(i);
+                invalid_way = l1_way_ptr_t'(i);
             end
         end
     end
@@ -128,6 +149,7 @@ module l1_cache (
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             resp_valid <= 1'b0;
+            victim_data_read <= 1'b0;
             
             for (int i = 0; i < L1_SETS; i++) begin : clear_l1_valid
                 l1_valid[i] <= '0;
@@ -171,6 +193,8 @@ module l1_cache (
                 l1_reuse[fill_index][victim_way] <= fill_line.reuse;
                 l1_tags[fill_index][victim_way] <= fill_tag;
             end
+
+            victim_data_read <= fill_valid && (&l1_valid[fill_index]) && !fill_ready;
         end
     end
 
@@ -194,7 +218,8 @@ module l1_cache (
                     end
                 end
 
-                l1_rd_out_data[i] <= l1_data[i][req_index];
+                // read out data
+                l1_rd_out_data[i] <= (fill_valid) ? l1_data[i][fill_index] : l1_data[i][req_index];
             end
         end
     endgenerate
