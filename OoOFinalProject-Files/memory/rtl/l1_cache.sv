@@ -1,7 +1,7 @@
 import mem_pkg::*;
 import rv32_ooo_pkg::*;
 
-// lockup-free L1 dcache
+// lockup-free L1 dcache (reads out data & tags in parallel, then selects the data from matching tag)
 module l1_cache (
     input logic clk,
     input logic rst_n,
@@ -33,7 +33,7 @@ module l1_cache (
     output line_addr_t miss_line_addr,
     output logic [WORD_SEL_BITS-1:0] miss_critical_word,
     output logic miss_is_store,
-    output lq_idx_t miss_lq_id,
+    output lq_idx_t miss_ld_id,
 
     // fill from MSHR
     input logic fill_valid,
@@ -45,9 +45,13 @@ module l1_cache (
     input logic victim_ready,
     output line_pkd_t victim_line 
 );
+    assign req_ready = (!fill_valid) && (miss_ready || tag_hit);
 
     // BRAM-mapped L1 cache (ways -> sets indexing)
     line_data_t l1_data [L1_WAYS][L1_SETS];
+
+    // every cycle, read out the request's index for each way
+    line_data_t l1_rd_out_data [L1_WAYS];
 
     // flop array (need to perform 4 tag compares in one cycle)
     logic [L1_TAG_BITS-1:0] l1_tags [L1_SETS][L1_WAYS];
@@ -56,6 +60,7 @@ module l1_cache (
     logic [L1_WAYS-1:0] l1_dirty [L1_SETS];
     logic [L1_WAYS-1:0] l1_reuse [L1_SETS];
 
+    // generate tag, index bits from address
     logic [L1_TAG_BITS-1:0] req_tag;
     assign req_tag = req_word_addr[XLEN-1 -: L1_TAG_BITS];
 
@@ -65,6 +70,11 @@ module l1_cache (
     logic [WORD_SEL_BITS-1:0] req_word_index;
     assign req_word_index = req_word_addr[2 +: WORD_SEL_BITS];
 
+    // store hits, generate an enable for each byte in the block
+    logic [BLOCK_SIZE-1:0] store_en;
+    assign store_en = req_bytes_accessed << (4 * req_word_index);
+
+    // check all the ways for matching tag (cache hit)
     logic tag_hit;
     l1_way_ptr_t tag_hit_way;
 
@@ -80,49 +90,115 @@ module l1_cache (
         end
     end
 
+    // logic for next-cycle cache hit response
+    l1_way_ptr_t hit_way_q;
+    logic [WORD_SEL_BITS-1:0] word_index_q;
+
+    assign resp_read_data = l1_rd_out_data[hit_way_q][word_index_q*XLEN +: XLEN];
+    
+    // find fill line's set index, tag
+    logic [L1_INDEX_BITS-1:0] fill_index;
+    assign fill_index = fill_line.line_addr[0 +: L1_INDEX_BITS];
+
+    logic [L1_TAG_BITS-1:0] fill_tag;
+    assign fill_tag = fill_line.line_addr[L1_INDEX_BITS +: L1_TAG_BITS];
+
+    l1_way_ptr_t victim_way;
+
+    // todo: change the logic later
+    assign fill_ready = ~(&l1_valid[fill_index]);
+
+    // todo: replace w/ tree plru logic
+    always_comb begin
+        victim_way = 0;
+        for (int i = L1_WAYS - 1; i >= 0; i--) begin : find_victim_temp
+            if (l1_valid[fill_index][i] == 0) begin
+                victim_way = l1_way_ptr_t'(i);
+            end
+        end
+    end
+
+    // miss logic
+    assign miss_valid = !tag_hit;
+    assign miss_line_addr = req_word_addr >> OFFSET_BITS;
+    assign miss_critical_word = req_word_index;
+    assign miss_is_store = req_is_store;
+    assign miss_ld_id = req_ld_id;
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
+            resp_valid <= 1'b0;
+            miss_valid <= 1'b0;
+            
+            for (int i = 0; i < L1_SETS; i++) begin : CLEAR_L1_VALID
+                l1_valid[i] <= '0;
+            end
 
         end else begin
             resp_valid <= 1'b0;
             resp_hit <= 1'b0;
-
             miss_valid <= 1'b0;
 
             // handle request
             if (req_valid && req_ready) begin
                 resp_valid <= 1'b1;
 
-                // load request
-                if (!req_is_store) begin
+                resp_hit <= tag_hit;
+                resp_is_store <= req_is_store;
 
-                    // cache hit (resp_read_data bram access is handled in other block)
-                    if (tag_hit) begin
-                        resp_hit <= 1'b1;
-                        resp_valid <= 1'b1;
-                        resp_is_store <= 1'b0;
+                resp_ld_id <= req_ld_id;
+                resp_st_id <= req_st_id;
 
-                        resp_ld_id <= req_ld_id;
-                        resp_st_id <= req_st_id;
-                    end 
+                hit_way_q <= tag_hit_way;
+                word_index_q <= req_word_index;
+
+                // load/store hit
+                if (tag_hit) begin
+                    // load hit, set reuse bit high
+                    if (!req_is_store)
+                        l1_reuse[req_index][tag_hit_way] <= 1'b1;
                     
-                    // todo: figure out miss handling
-                    else if (miss_ready) begin
-
+                    // store request (edit l1 directly and mark data as dirty)
+                    else begin
+                        l1_dirty[req_index][tag_hit_way] <= 1'b1;
+                        l1_reuse[req_index][tag_hit_way] <= 1'b1;
                     end
                 end
-                
-                // store request
-                else begin
+            end
 
-                end
+            // fill L1 cache
+            if (fill_valid && fill_ready) begin
+                l1_valid[fill_index][victim_way] <= 1'b1;
+                l1_dirty[fill_index][victim_way] <= fill_line.dirty;
+                l1_reuse[fill_index][victim_way] <= fill_line.reuse;
+                l1_tags[fill_index][victim_way] <= fill_tag;
             end
         end
     end
 
     // bram handler (vendor blocks don't support reset)
-    always_ff @(posedge clk) begin
-        
-    end
+    // explicitly generate each way (create L1_WAYS banks)
+    generate 
+        for (genvar i = 0; i < L1_WAYS; i++) begin : g_ways_data
+            always_ff @(posedge clk) begin
+                // fill L1 from MSHRS
+                if (fill_valid && fill_ready && (victim_way == i)) begin
+                    for (int b = 0; b < BLOCK_SIZE; b++) begin // process per-byte for bram inference
+                        l1_data[i][fill_index][b*8 +: 8] <= fill_line.data[b*8 +: 8];
+                    end
+                end
+
+                // on store hit, directly modify data in cache
+                else if (req_valid && req_ready && req_is_store && tag_hit && (tag_hit_way == i)) begin
+                    for (int b = 0; b < BLOCK_SIZE; b++) begin
+                        if (store_en[b])
+                            l1_data[i][req_index][b*8 +: 8] <= req_write_data[b[1:0]*8 +: 8];
+                    end
+                end
+
+                l1_rd_out_data[i] <= l1_data[i][req_index];
+            end
+        end
+    endgenerate
 
 endmodule
