@@ -87,16 +87,36 @@ module mshr_file (
     end
 
     // generate request vectors from mshrs in the same state
-    logic [MSHR_COUNT-1:0] req_eb, req_l2, req_wb, req_mm, req_fill;
+    logic [MSHR_COUNT-1:0] req_eb, req_l2, req_wb, req_mem, req_fill;
     always_comb begin
         for (int i = 0; i < MSHR_COUNT; i++) begin : gen_req_vectors_mshr
-            req_eb[i] = valid[i] && (mshr_access_states[i] == EB_SNOOP);
-            req_l2[i] = valid[i] && (mshr_access_states[i] == L2_SNOOP);
-            req_wb[i] = valid[i] && (mshr_access_states[i] == WB_SNOOP);
-            req_mem[i] = valid[i] && (mshr_access_states[i] == MM_SNOOP);
-            req_fill[i] = valid[i] && (mshr_access_states[i] == FILL_WAIT);
+            req_eb[i] = mshr_valid[i] && (mshr_access_states[i] == EB_SNOOP);
+            req_l2[i] = mshr_valid[i] && (mshr_access_states[i] == L2_SNOOP);
+            req_wb[i] = mshr_valid[i] && (mshr_access_states[i] == WB_SNOOP);
+            req_mem[i] = mshr_valid[i] && (mshr_access_states[i] == MM_SNOOP);
+            req_fill[i] = mshr_valid[i] && (mshr_access_states[i] == FILL_WAIT);
         end
     end
+
+    // bunch of rr arbiters to figure out which mshr gets to utilize the port
+    mshr_id_t grant_index_eb, grant_index_l2, grant_index_wb, grant_index_mem, grant_index_fill;
+    logic grant_valid_eb, grant_valid_l2, grant_valid_wb, grant_valid_mem, grant_valid_fill;
+
+    // for eb and wb, we can always snoop freely, but wait for ready for everything else
+    rr_arbiter #( .N(MSHR_COUNT) ) eb_arbiter ( .clk(clk), .rst_n(rst_n), 
+    .reqs(req_eb), .grant_taken(1'b1), .grant_valid(grant_valid_eb), .grant_index(grant_index_eb));
+
+    rr_arbiter #( .N(MSHR_COUNT) ) l2_arbiter ( .clk(clk), .rst_n(rst_n), 
+    .reqs(req_l2), .grant_taken(l2_req_ready), .grant_valid(grant_valid_l2), .grant_index(grant_index_l2));
+
+    rr_arbiter #( .N(MSHR_COUNT) ) wb_arbiter ( .clk(clk), .rst_n(rst_n), 
+    .reqs(req_wb), .grant_taken(1'b1), .grant_valid(grant_valid_wb), .grant_index(grant_index_wb));
+
+    rr_arbiter #( .N(MSHR_COUNT) ) mem_arbiter ( .clk(clk), .rst_n(rst_n), 
+    .reqs(req_mem), .grant_taken(mem_req_ready), .grant_valid(grant_valid_mem), .grant_index(grant_index_mem));
+
+    rr_arbiter #( .N(MSHR_COUNT) ) fill_arbiter ( .clk(clk), .rst_n(rst_n), 
+    .reqs(req_fill), .grant_taken(fill_ready), .grant_valid(grant_valid_fill), .grant_index(grant_index_fill));
 
     assign miss_ready = !(&mshr_valid) || miss_coalesces;
 
