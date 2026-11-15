@@ -1,3 +1,3 @@
-// L2 cache, exclusive, lockup-free (replacement policy inside)
+// L2 cache, exclusive, lockup-free
 module l2_cache;
 endmodule
