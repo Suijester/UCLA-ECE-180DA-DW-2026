@@ -153,7 +153,7 @@ module store_queue (
     //   wait_wake     : L1 missed (it sent the line to an MSHR, write-allocate);
     //                   wait for that line to be filled, then send the store again
     // ---------------------------------------------------------------------
-    logic drain_pending, wait_wake;
+    logic drain_pending, wait_wake, wake_seen;
     logic drain_fire, drain_hit, drain_miss, head_wake;
 
     line_addr_t head_line;
@@ -182,6 +182,7 @@ module store_queue (
             sq_under_branch <= '0;
             drain_pending <= 1'b0;
             wait_wake <= 1'b0;
+            wake_seen <= 1'b0;
         end else begin
             // 1. mark newly retired entries
             for (int i = 0; i < SQ_SIZE; i++) begin
@@ -206,6 +207,7 @@ module store_queue (
             end
 
             // 4. drain handshake with L1 (the head entry is retired, so a squash never touches it)
+                        // 4. drain handshake with L1 (the head entry is retired, so a squash never touches it)
             if (drain_fire) drain_pending <= 1'b1;
 
             if (drain_hit) begin
@@ -213,14 +215,27 @@ module store_queue (
                 head <= head + 1'b1;
                 drain_pending <= 1'b0;
             end
+            
+            // listen for the head line's wake from the moment the request is sent:
+            // remember a wake seen in the send cycle or while waiting for the response
+            if (drain_fire) begin
+                wake_seen <= head_wake;
+            end else if (drain_pending && head_wake) begin
+                wake_seen <= 1'b1;
+            end
 
-            // a miss waits for the fill; if the fill's wake lands in the same cycle
-            // as the miss response, retry straight away instead of waiting forever
+             // a miss waits for the fill, unless its wake already came (earlier in
+            // flight, or in this same cycle): then retry straight away
             if (drain_miss) begin
                 drain_pending <= 1'b0;
-                wait_wake <= !head_wake;
+                wait_wake <= !(wake_seen || head_wake);
+                wake_seen <= 1'b0;
             end else if (wait_wake && head_wake) begin
                 wait_wake <= 1'b0;
+            end
+
+            if (drain_hit) begin
+                wake_seen <= 1'b0;
             end
         end
     end

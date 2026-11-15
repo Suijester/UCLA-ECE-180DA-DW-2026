@@ -267,3 +267,83 @@ async def test_retired_stores_survive_mispredict(dut):
     idle_inputs(dut)
     await settle()
     assert int(dut.sq_valid.value) == 0b1
+
+
+async def send_head(dut):
+    """The L1 accepts the head's request at the next edge."""
+    dut.drain_ready.value = 1
+    await tick(dut)
+    dut.drain_ready.value = 0
+
+@cocotb.test()
+async def test_wake_in_send_cycle_then_miss(dut):
+    """A wake in the same cycle the request is accepted is remembered for the miss."""
+    await setup(dut)
+    await alloc(dut, 0, 0xA00, 0xA0)
+    dut.rob_head_tag.value = tag(1)
+    await tick(dut)
+    await settle()
+    dut.drain_ready.value = 1                        # request accepted at this edge...
+    dut.wake_valid.value = 1                         # ...and the line's wake in the same cycle
+    dut.wake_line_addr.value = line_of(0xA00)
+    await tick(dut)
+    idle_inputs(dut)
+    dut.drain_resp_valid.value = 1                   # miss response, no wake this time
+    dut.drain_resp_hit.value = 0
+    dut.drain_resp_st_id.value = 0
+    await tick(dut)
+    idle_inputs(dut)
+    await settle()
+    assert dut.drain_valid.value == 1, "missed the wake from the send cycle and slept"
+
+
+@cocotb.test()
+async def test_wake_while_pending_then_late_miss(dut):
+    """A wake between acceptance and a delayed miss response is remembered."""
+    await setup(dut)
+    await alloc(dut, 0, 0xB00, 0xB0)
+    dut.rob_head_tag.value = tag(1)
+    await tick(dut)
+    await settle()
+    await send_head(dut)                             # accepted; response not back yet
+    dut.wake_valid.value = 1                         # wake arrives while in flight
+    dut.wake_line_addr.value = line_of(0xB00)
+    await tick(dut)
+    idle_inputs(dut)
+    dut.drain_resp_valid.value = 1                   # miss response arrives later
+    dut.drain_resp_hit.value = 0
+    dut.drain_resp_st_id.value = 0
+    await tick(dut)
+    idle_inputs(dut)
+    await settle()
+    assert dut.drain_valid.value == 1, "missed the in-flight wake and slept"
+
+@cocotb.test()
+async def test_other_line_wake_in_flight_ignored(dut):
+    """A wake for a different line while in flight must not count as ours."""
+    await setup(dut)
+    await alloc(dut, 0, 0xC00, 0xC0)
+    dut.rob_head_tag.value = tag(1)
+    await tick(dut)
+    await settle()
+    await send_head(dut)
+    dut.wake_valid.value = 1                         # someone else's line
+    dut.wake_line_addr.value = line_of(0xD00)
+    await tick(dut)
+    idle_inputs(dut)
+    dut.drain_resp_valid.value = 1
+    dut.drain_resp_hit.value = 0
+    dut.drain_resp_st_id.value = 0
+    await tick(dut)
+    idle_inputs(dut)
+    for _ in range(3):
+        await settle()
+        assert dut.drain_valid.value == 0, "retried on another line's wake"
+        await tick(dut)
+    dut.wake_valid.value = 1                         # now our line is filled
+    dut.wake_line_addr.value = line_of(0xC00)
+    await tick(dut)
+    idle_inputs(dut)
+    await settle()
+    await drain_one(dut, 0xC00, 0xC0, hit=True)
+    assert dut.sq_empty.value == 1
