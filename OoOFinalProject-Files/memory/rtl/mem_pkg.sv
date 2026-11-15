@@ -72,4 +72,15 @@ package mem_pkg;
         STORE_SET_DISAMBIG,
         CONSERVATIVE_DISAMBIG
     } disambig_type;
+
+    // mshr state of access
+    typedef enum logic [2:0] {
+        EB_SNOOP,
+        L2_SNOOP,
+        L2_WAIT,
+        WB_SNOOP,
+        MM_SNOOP,
+        MM_WAIT,
+        FILL_WAIT
+    } mshr_state;
 endpackage
