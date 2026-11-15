@@ -50,3 +50,31 @@ jobs:
           unset PYTHONHOME
           unset PYTHONPATH
           make SIM=verilator
+      
+
+      # 7. Run store forwarding tests
+      - name: Run store_forward Cocotb tests
+        working-directory: OoOFinalProject-Files/memory/tests/store_forward
+        run: |
+          unset PYTHONHOME
+          unset PYTHONPATH
+          make SIM=verilator
+          ! grep -q "<failure" results.xml
+
+      # 8. Run store queue tests
+      - name: Run store_queue Cocotb tests
+        working-directory: OoOFinalProject-Files/memory/tests/store_queue
+        run: |
+          unset PYTHONHOME
+          unset PYTHONPATH
+          make SIM=verilator
+          ! grep -q "<failure" results.xml
+
+      # 9. Run store sets tests
+      - name: Run store_sets Cocotb tests
+        working-directory: OoOFinalProject-Files/memory/tests/store_sets
+        run: |
+          unset PYTHONHOME
+          unset PYTHONPATH
+          make SIM=verilator
+          ! grep -q "<failure" results.xml
