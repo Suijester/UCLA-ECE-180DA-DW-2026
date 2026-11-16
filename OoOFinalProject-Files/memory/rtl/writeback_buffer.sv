@@ -13,8 +13,8 @@ module writeback_buffer (
     // send to memory
     input logic arb_write_ready,
     output logic arb_write_valid,
-    output line_pkd_t arb_fill_line,
-    input logic arb_ins_done,        // cannot remove the item from wb until mem raises this
+    output line_pkd_t arb_write_line,
+    input logic arb_write_done,        // cannot remove the item from wb until mem raises this
 
     // mshr snooping
     input logic mshr_probe_valid,
@@ -103,7 +103,7 @@ module writeback_buffer (
                 transit_valid <= 1'b1;
             end
 
-            if (arb_ins_done) begin
+            if (arb_write_done) begin
                 transit_valid <= 1'b0;
                 valid_entries[entry_in_transit] <= 1'b0;
             end
