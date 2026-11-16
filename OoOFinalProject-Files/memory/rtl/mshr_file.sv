@@ -39,7 +39,7 @@ module mshr_file (
     input line_pkd_t l2_resp_line,
     input mshr_id_t l2_resp_mshr_id,
 
-    // check wb (L2 -> MM) buffer 
+    // check wb (L2 -> MEM) buffer 
     // (tentatively, wb is basically eb and doesn't allow data in transit to get sent to mshr)
     output logic wb_probe_valid,
     output line_addr_t wb_probe_line_addr,
@@ -93,7 +93,7 @@ module mshr_file (
             req_eb[i] = mshr_valid[i] && (mshr_access_states[i] == EB_SNOOP);
             req_l2[i] = mshr_valid[i] && (mshr_access_states[i] == L2_SNOOP);
             req_wb[i] = mshr_valid[i] && (mshr_access_states[i] == WB_SNOOP);
-            req_mem[i] = mshr_valid[i] && (mshr_access_states[i] == MM_SNOOP);
+            req_mem[i] = mshr_valid[i] && (mshr_access_states[i] == MEM_SNOOP);
             req_fill[i] = mshr_valid[i] && (mshr_access_states[i] == FILL_WAIT);
         end
     end
@@ -120,10 +120,44 @@ module mshr_file (
 
     assign miss_ready = !(&mshr_valid) || miss_coalesces;
 
+    // snoop eviction buffer using arbiter results
+    assign eb_probe_valid = grant_valid_eb;
+    assign eb_probe_line_addr = mshr_line_addr[grant_index_eb];
+
+    // snoop L2
+    assign l2_req_valid = grant_valid_l2;
+    assign l2_line_addr = mshr_line_addr[grant_index_l2];
+    assign l2_req_mshr_id = grant_index_l2;
+
+    // snoop wb
+    assign wb_probe_valid = grant_valid_wb;
+    assign wb_probe_line_addr = mshr_line_addr[grant_index_wb];
+
+    // snoop mem
+    assign mem_req_valid = grant_valid_mem;
+    assign mem_req_line_addr = mshr_line_addr[grant_index_mem];
+    assign mem_req_mshr_id = grant_index_mem;
+
+    // fill port
+    assign fill_valid = grant_valid_fill;
+    assign fill_line = mshr_line_buffer[grant_index_fill];
+
+    // wake up on fill
+    assign wake_valid = (fill_valid && fill_ready);
+    assign wake_line_addr = mshr_line_addr[grant_index_fill];
+
+    // generate line_pkd_t from mem_resp_data
+    line_pkd_t mem_pkd_line;
+    assign mem_pkd_line.data = mem_resp_data;
+    assign mem_pkd_line.line_addr = mshr_line_addr[mem_resp_mshr_id];
+    assign mem_pkd_line.dirty = 1'b0;
+    assign mem_pkd_line.reuse = 1'b0;
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             mshr_valid <= '0;
         end else begin
+
             // allocate new mshr entry
             if (!miss_coalesces && miss_valid && miss_ready) begin
                 mshr_valid[alloc_mshr] <= 1'b1;
@@ -131,7 +165,44 @@ module mshr_file (
                 mshr_access_states[alloc_mshr] <= EB_SNOOP;
             end
 
+            // eb transition logic
+            if (eb_probe_valid && eb_probe_hit) begin
+                mshr_line_buffer[grant_index_eb] <= eb_probe_line;
+                mshr_access_states[grant_index_eb] <= FILL_WAIT;
+            end else if (eb_probe_valid && !eb_probe_retry) begin
+                mshr_access_states[grant_index_eb] <= L2_SNOOP;
+            end
 
+            // l2 transition logic
+            if (l2_req_valid && l2_req_ready)
+                mshr_access_states[grant_index_l2] <= L2_WAIT;
+
+            if (l2_resp_valid) begin
+                mshr_access_states[l2_resp_mshr_id] <= (l2_resp_hit) ? FILL_WAIT : WB_SNOOP;
+                mshr_line_buffer[l2_resp_mshr_id] <= l2_resp_line;
+            end
+
+            // wb transition logic
+            if (wb_probe_valid && wb_probe_hit) begin
+                mshr_line_buffer[grant_index_wb] <= wb_probe_line;
+                mshr_access_states[grant_index_wb] <= FILL_WAIT;
+            end else if (wb_probe_valid && !wb_probe_retry) begin
+                mshr_access_states[grant_index_wb] <= MEM_SNOOP;
+            end
+
+            // main memory transition logic
+            if (mem_req_valid && mem_req_ready)
+                mshr_access_states[grant_index_mem] <= MEM_WAIT;
+
+            if (mem_resp_valid) begin
+                mshr_line_buffer[mem_resp_mshr_id] <= mem_pkd_line;
+                mshr_access_states[mem_resp_mshr_id] <= FILL_WAIT;
+            end
+
+            // fill transition logic
+            if (fill_valid && fill_ready) begin
+                mshr_valid[grant_index_fill] <= 1'b0;
+            end
         end
     end
 

@@ -79,8 +79,8 @@ package mem_pkg;
         L2_SNOOP,
         L2_WAIT,
         WB_SNOOP,
-        MM_SNOOP,
-        MM_WAIT,
+        MEM_SNOOP,
+        MEM_WAIT,
         FILL_WAIT
     } mshr_state;
 endpackage
