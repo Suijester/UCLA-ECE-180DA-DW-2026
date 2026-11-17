@@ -73,7 +73,7 @@ package mem_pkg;
         CONSERVATIVE_DISAMBIG
     } disambig_type;
 
-    // mshr state of access
+    // for each mshr, which memory it's accessing
     typedef enum logic [2:0] {
         EB_SNOOP,
         L2_SNOOP,
@@ -83,4 +83,15 @@ package mem_pkg;
         MEM_WAIT,
         FILL_WAIT
     } mshr_state;
+
+    // state of l2 cache at any given time
+    typedef enum logic [2:0] {
+        IDLE,
+        REQ_TAGS,
+        REQ_DATA,
+        INS_SELECT,
+        INS_EVICT,
+        INS_WRITE
+    } l2_state;
+
 endpackage

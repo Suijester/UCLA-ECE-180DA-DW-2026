@@ -44,6 +44,25 @@ module l2_cache (
     assign mshr_req_index = mshr_req_line_addr[0 +: L2_INDEX_BITS];
     assign mshr_req_tag = mshr_req_line_addr[L2_INDEX_BITS +: L2_TAG_BITS];
 
-    // fill 
+    // maintain L2 cache state
+    l2_state cache_state;
+
+    // take in requests from either fill or mshrs on handshake
+    mshr_id_t req_id;
+    line_addr_t req_line_addr;
+    line_pkd_t req_fill_line;
+
+    assign mshr_req_ready = (cache_state == IDLE) && !(l2_fill_valid);
+    assign l2_fill_ready = (cache_state == IDLE);
+
+
+    // bram handler (vendor blocks don't support reset)
+    generate 
+        for (genvar i = 0; i < L1_WAYS; i++) begin : g_ways_data
+            always_ff @(posedge clk) begin
+                
+            end
+        end
+    endgenerate
 
 endmodule
