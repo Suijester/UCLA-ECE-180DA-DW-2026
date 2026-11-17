@@ -87,8 +87,8 @@ package mem_pkg;
     // state of l2 cache at any given time
     typedef enum logic [2:0] {
         IDLE,
-        REQ_TAGS,
         REQ_DATA,
+        RESP,
         INS_SELECT,
         INS_EVICT,
         INS_WRITE
