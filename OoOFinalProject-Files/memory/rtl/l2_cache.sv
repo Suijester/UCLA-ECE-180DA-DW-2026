@@ -56,12 +56,10 @@ module l2_cache (
 
     // break up line addrs for current same-cycle req
     line_addr_t selected_l2_req;
-    logic [L2_TAG_BITS-1:0] l2_req_tag;
     logic [L2_INDEX_BITS-1:0] l2_req_index;
 
     assign selected_l2_req = (l2_fill_valid) ? l2_fill_line.line_addr : mshr_req_line_addr;
     assign l2_req_index = selected_l2_req[0 +: L2_INDEX_BITS];
-    assign l2_req_tag = selected_l2_req[L2_INDEX_BITS +: L2_TAG_BITS];
 
     // matching cache tags, rrpv, dirty read out
     logic [L2_TAG_BITS-1:0] l2_read_tags [0:L2_WAYS-1];
@@ -111,18 +109,19 @@ module l2_cache (
         .eviction_occurred(eviction_occurred)
     );
 
-    // bram handler (vendor blocks don't support reset)
-    generate 
-        for (genvar i = 0; i < L2_WAYS; i++) begin : g_ways_data
-            always_ff @(posedge clk) begin
-                // read out data from BRAM
-                l2_read_tags[i] <= l2_tags[i][(cache_state == IDLE) ? l2_req_index : req_index_q];
-                l2_read_rrpv[i] <= l2_rrpv[i][(cache_state == IDLE) ? l2_req_index : req_index_q];
-                l2_read_dirty[i] <= l2_dirty[i][(cache_state == IDLE) ? l2_req_index : req_index_q];
-                l2_read_data[i] <= l2_data[i][req_index_q];
-            end
-        end
-    endgenerate
+    l2_way_ptr_t victim_way_q;
+    logic [1:0] new_rrpv_q [0:L2_WAYS-1];
+
+    // send victim to wb if there's no invalid ways
+    assign l2_victim_valid = (cache_state == INS_EVICT);
+
+    assign l2_victim_line.dirty = l2_read_dirty[victim_way_q];
+    assign l2_victim_line.reuse = 1'b0;
+    assign l2_victim_line.data = l2_read_data[victim_way_q];
+    assign l2_victim_line.line_addr = {l2_read_tags[victim_way_q], req_index_q};
+
+    // INS_WRITE logic for writing into BRAM
+    assign l2_ins_done = (cache_state == INS_WRITE);
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
@@ -154,15 +153,18 @@ module l2_cache (
                 end
 
                 INS_SELECT: begin
-
+                    victim_way_q <= victim_way;
+                    new_rrpv_q <= new_rrpv;
+                    cache_state <= (eviction_occurred && l2_read_dirty[victim_way]) ? INS_EVICT : INS_WRITE;
                 end
 
                 INS_EVICT: begin
-
+                    if (l2_victim_ready && l2_victim_valid) cache_state <= INS_WRITE;
                 end
 
                 INS_WRITE: begin
-
+                    l2_valid[req_index_q][victim_way_q] <= 1'b1;
+                    cache_state <= IDLE;
                 end
 
                 // should not occur
@@ -170,5 +172,29 @@ module l2_cache (
             endcase
         end
     end
+
+    // bram handler (vendor blocks don't support reset)
+    generate 
+        for (genvar i = 0; i < L2_WAYS; i++) begin : g_ways_data
+            always_ff @(posedge clk) begin
+                // read out data from BRAM
+                l2_read_tags[i] <= l2_tags[i][(cache_state == IDLE) ? l2_req_index : req_index_q];
+                l2_read_rrpv[i] <= l2_rrpv[i][(cache_state == IDLE) ? l2_req_index : req_index_q];
+                l2_read_dirty[i] <= l2_dirty[i][(cache_state == IDLE) ? l2_req_index : req_index_q];
+                l2_read_data[i] <= l2_data[i][req_index_q];
+
+                // write into BRAM (only on fill)
+                if (cache_state == INS_WRITE) begin
+                    if (victim_way_q == i) begin
+                        l2_tags[i][req_index_q] <= req_tag_q;
+                        l2_dirty[i][req_index_q] <= req_fill_line_q.dirty;
+                        l2_data[i][req_index_q] <= req_fill_line_q.data;
+                    end
+
+                    l2_rrpv[i][req_index_q] <= new_rrpv_q[i];
+                end
+            end
+        end
+    endgenerate
 
 endmodule
