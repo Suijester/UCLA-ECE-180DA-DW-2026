@@ -94,4 +94,10 @@ package mem_pkg;
         INS_WRITE
     } l2_state;
 
+    typedef enum logic [1:0] {
+        ARB_IDLE,
+        SERVING_WRITE,
+        SERVING_READ
+    } arb_state;
+
 endpackage
