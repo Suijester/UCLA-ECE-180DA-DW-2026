@@ -87,11 +87,14 @@ package mem_pkg;
         logic result_pending; //load_result calculated?
 
         logic [XLEN-1:0] result_data;
+        logic [3:0] fwd_mask;
+        logic [XLEN-1:0] fwd_data;
 
         st_ptr_t sq_tail_snapshot;
 
-        logic wake_valid;
+        logic wait_wake;
         logic wake_seen;
         logic l1_retry;
+
     } lq_entry_t;
 endpackage

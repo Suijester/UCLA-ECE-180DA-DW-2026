@@ -14,6 +14,10 @@ async def settle():
 def val(signal):
     return int(signal.value)
 
+def request(dut):
+    return (val(dut.l1_req_valid), val(dut.l1_req_addr),
+            val(dut.l1_req_byte_mask), val(dut.l1_req_ld_id))
+
 
 async def tick(dut):
     dut.clk.value = 0
@@ -128,16 +132,18 @@ async def test_oldest_eligible_selection(dut):
     await issue(dut, 2, 0x2000)
     assert val(dut.check_addr) == 0x2000
     assert val(dut.l1_req_ld_id) == 1
-    # First load now issues and should take priority.
+    # First load now issues, but second load's request is held.
     await issue(dut, 1, 0x1000)
+
     assert val(dut.check_addr) == 0x1000
-    assert val(dut.l1_req_ld_id) == 0
-    # Accept first load's L1 request; next eligible is second.
+    assert val(dut.l1_req_ld_id) == 1  # Held request stays stable
+
+    # Accept second load's request.
     dut.l1_req_ready.value = 1
     await tick(dut)
-    assert val(dut.check_addr) == 0x2000
-    assert val(dut.l1_req_ld_id) == 1
-    # Third load has no address and remains ineligible.
+
+    # Now first load can request L1.
+    assert val(dut.l1_req_ld_id) == 0
 
 
 @cocotb.test()
@@ -474,3 +480,117 @@ async def test_same_cycle_wakeup_and_miss_response(dut):
     await settle()
     assert val(dut.l1_req_valid) == 1
     assert val(dut.l1_req_ld_id) == ld_id
+
+@cocotb.test()
+async def test_held_partial_forwarding_and_second_load(dut):
+    """Stalled A must not change when B appears; forwarded byte survives SQ changes."""
+    await setup(dut)
+    await dispatch(dut, 11)
+    await issue(dut, 11, 0x1000, mask=0xF)
+
+    # SQ forwards byte lane 1 of A; L1 supplies the other three lanes.
+    dut.fwd_data.value = 0x0000AA00
+    dut.fwd_bytes_from_store.value = 0b0010
+    dut.fwd_all_from_store.value = 0
+    dut.l1_req_ready.value = 0
+    await settle()
+    a_req = request(dut)
+    assert a_req == (1, 0x1000, 0xF, 0)
+    await tick(dut)  # Request A is now held; forwarding snapshot captured.
+
+    # B becomes eligible while A is held. SQ output now belongs to B.
+    await dispatch(dut, 12)
+    await issue(dut, 12, 0x2000, mask=0xF)
+    dut.fwd_data.value = 0x00000000
+    dut.fwd_bytes_from_store.value = 0
+    await settle()
+    assert val(dut.check_valid) == 1
+    assert val(dut.check_addr) == 0x2000
+    for _ in range(3):
+        assert request(dut) == a_req, "Held L1 request changed under backpressure"
+        await tick(dut)
+
+    dut.l1_req_ready.value = 1
+    await settle()
+    assert request(dut) == a_req
+    await tick(dut)  # A handshakes.
+    dut.l1_req_ready.value = 0
+    await settle()
+    assert request(dut) == (1, 0x2000, 0xF, 1), "B should be next"
+
+    # Response for A: memory=0x11223344, SQ lane 1=0xAA => 0x1122AA44.
+    dut.l1_resp_valid.value = 1
+    dut.l1_resp_hit.value = 1
+    dut.l1_resp_ld_id.value = 0
+    dut.l1_resp_data.value = 0x11223344
+    await tick(dut)
+    dut.l1_resp_valid.value = 0
+    await settle()
+    assert val(dut.load_out_valid) == 1
+    assert val(dut.load_out_rob_tag) == 11
+    assert val(dut.load_out) == 0x1122AA44, (
+        f"Incorrect byte merge: got 0x{val(dut.load_out):08x}"
+    )
+
+
+@cocotb.test()
+async def test_retry_cannot_preempt_held_new_request(dut):
+    """A retry becoming eligible must not replace an already-stalled B request."""
+    await setup(dut)
+    await dispatch(dut, 21)
+    await issue(dut, 21, 0x3000)
+    dut.l1_req_ready.value = 1
+    await tick(dut)  # A accepted by L1.
+    dut.l1_req_ready.value = 0
+    dut.l1_resp_valid.value = 1
+    dut.l1_resp_hit.value = 0
+    dut.l1_resp_ld_id.value = 0
+    await tick(dut)  # A misses and waits for wakeup.
+    dut.l1_resp_valid.value = 0
+
+    await dispatch(dut, 22)
+    await issue(dut, 22, 0x4000)
+    await settle()
+    b_req = request(dut)
+    assert b_req == (1, 0x4000, 0xF, 1)
+    await tick(dut)  # B becomes held.
+
+    # Wake A; A's retry now has priority in the arbiter, but not over held B.
+    dut.wake_valid.value = 1
+    dut.wake_line_addr.value = 0x3000 >> 4  # OFFSET_BITS=4 in mem_pkg
+    await tick(dut)
+    dut.wake_valid.value = 0
+    await settle()
+    assert request(dut) == b_req, "Retry preempted stalled B"
+
+    dut.l1_req_ready.value = 1
+    await tick(dut)  # B accepted first.
+    dut.l1_req_ready.value = 0
+    await settle()
+    assert request(dut) == (1, 0x3000, 0xF, 0), "A retry should follow B"
+
+
+@cocotb.test()
+async def test_full_forward_while_another_request_held(dut):
+    """An SQ-only load may finish while an unrelated L1 request is stalled."""
+    await setup(dut)
+    await dispatch(dut, 31)
+    await issue(dut, 31, 0x5000)
+    dut.l1_req_ready.value = 0
+    await settle()
+    a_req = request(dut)
+    await tick(dut)  # Hold A.
+
+    await dispatch(dut, 32)
+    await issue(dut, 32, 0x6000)
+    dut.fwd_all_from_store.value = 1
+    dut.fwd_bytes_from_store.value = 0xF
+    dut.fwd_data.value = 0xCAFEBABE
+    await settle()
+    assert request(dut) == a_req
+    await tick(dut)  # B completes via SQ, A stays held.
+    assert request(dut) == a_req
+    assert val(dut.load_out_valid) == 1
+    assert val(dut.load_out_rob_tag) == 32
+    assert val(dut.load_out) == 0xCAFEBABE
+
