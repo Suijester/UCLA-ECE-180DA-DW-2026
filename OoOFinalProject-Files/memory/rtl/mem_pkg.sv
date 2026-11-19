@@ -67,4 +67,31 @@ package mem_pkg;
         STORE_SET_DISAMBIG,
         CONSERVATIVE_DISAMBIG
     } disambig_type;
+
+    //load queue entry
+    typedef struct packed {
+        logic valid;
+        rob_tag_t rob_tag;
+
+        logic [XLEN-1:0] addr;
+        logic addr_valid;
+        logic [3:0] byte_mask;
+        logic [1:0] byte_offset;
+        logic load_unsigned;
+        
+        mem_size_e mem_size;
+        logic executed;
+
+        logic sq_checked; //sent request to sq?
+        logic l1_waiting; //gotten response from l1?
+        logic result_pending; //load_result calculated?
+
+        logic [XLEN-1:0] result_data;
+
+        st_ptr_t sq_tail_snapshot;
+
+        logic wake_valid;
+        logic wake_seen;
+        logic l1_retry;
+    } lq_entry_t;
 endpackage

@@ -50,3 +50,18 @@ jobs:
           unset PYTHONHOME
           unset PYTHONPATH
           make SIM=verilator
+      
+      # 7. Run load_queue tests
+      - name: Run load_queue Cocotb tests
+        working-directory: OoOFinalProject-Files/memory/tests/load_queue
+        run: |
+          unset PYTHONHOME
+          unset PYTHONPATH
+          make SIM=verilator
+      
+      - name: Run load_result Cocotb tests
+        working-directory: OoOFinalProject-Files/memory/tests/load_result
+        run: |
+          unset PYTHONHOME
+          unset PYTHONPATH
+          make SIM=verilator
