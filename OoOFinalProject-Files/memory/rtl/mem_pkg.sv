@@ -1,7 +1,6 @@
 package mem_pkg;
     import rv32_ooo_pkg::*;
     
-    // L1 cache parameters
     localparam L1_SIZE = 4096;
     localparam L1_WAYS = 4;
 
@@ -48,6 +47,11 @@ package mem_pkg;
     typedef logic [$clog2(SQ_SIZE):0] st_ptr_t;
 
     typedef logic [$clog2(MSHR_COUNT)-1:0] mshr_id_t;
+    typedef logic [$clog2(L1_WAYS)-1:0] l1_way_ptr_t;
+    typedef logic [$clog2(L2_WAYS)-1:0] l2_way_ptr_t;
+
+    typedef logic [$clog2(EB_SIZE)-1:0] eb_way_ptr_t;
+    typedef logic [$clog2(WB_SIZE)-1:0] wb_way_ptr_t;
     
     // store set typedefs
     typedef logic [$clog2(SSIT_SIZE)-1:0] ssit_ptr_t; // SSIT indexing bits
@@ -67,6 +71,34 @@ package mem_pkg;
         STORE_SET_DISAMBIG,
         CONSERVATIVE_DISAMBIG
     } disambig_type;
+
+    // for each mshr, which memory it's accessing
+    typedef enum logic [2:0] {
+        EB_SNOOP,
+        L2_SNOOP,
+        L2_WAIT,
+        WB_SNOOP,
+        MEM_SNOOP,
+        MEM_WAIT,
+        FILL_WAIT
+    } mshr_state;
+
+    // state of l2 cache at any given time
+    typedef enum logic [2:0] {
+        IDLE,
+        REQ_DATA,
+        RESP,
+        INS_SELECT,
+        INS_EVICT,
+        INS_WRITE
+    } l2_state;
+
+    typedef enum logic [1:0] {
+        ARB_IDLE,
+        SERVING_WRITE,
+        SERVING_READ
+    } arb_state;
+
 
     //load queue entry
     typedef struct packed {
@@ -98,3 +130,5 @@ package mem_pkg;
 
     } lq_entry_t;
 endpackage
+    
+
