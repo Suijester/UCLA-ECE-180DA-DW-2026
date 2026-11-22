@@ -128,6 +128,9 @@ package mem_pkg;
         logic wake_seen;
         logic l1_retry;
 
+        phys_reg_t writeback_pdst;
+        logic under_unresolved_branch;
+
     } lq_entry_t;
 endpackage
     
