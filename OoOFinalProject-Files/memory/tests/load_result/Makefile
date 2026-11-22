@@ -8,10 +8,14 @@ PKG_DIR := $(abspath $(TEST_DIR)/../../../common)
 VERILOG_SOURCES = \
     $(PKG_DIR)/rv32_ooo_pkg.sv \
     $(RTL_DIR)/mem_pkg.sv \
-    $(RTL_DIR)/load_result.sv 
+    $(RTL_DIR)/circular_fifo.sv \
+    $(RTL_DIR)/rr_arbiter.sv \
+    $(RTL_DIR)/load_result.sv \
+    $(TEST_DIR)/load_result_tb_wrapper.sv
 
-TOPLEVEL = load_result
+TOPLEVEL = load_result_tb_wrapper
 COCOTB_TEST_MODULES = test_load_result
+
 
 
 include $(shell cocotb-config --makefiles)/Makefile.sim
