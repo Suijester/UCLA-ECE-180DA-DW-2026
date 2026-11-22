@@ -18,8 +18,9 @@ def replicate(value, size):
     return value & 0xFFFFFFFF
 
 
-async def run(dut, stores, head, ld_tail, ld_addr, ld_bytes):
-    """stores: {slot: (word_addr, bytes_en, data_replicated)}; returns fwd outputs."""
+async def run(dut, stores, head, ld_tail, ld_addr, ld_bytes, unknown=()):
+    """stores: {slot: (word_addr, bytes_en, data_replicated)}; returns fwd outputs.
+    unknown: slots whose store has dispatched but not issued (no address yet)."""
     valid = addr_flat = bytes_flat = data_flat = 0
     for slot, (addr, ben, data) in stores.items():
         valid |= 1 << slot
@@ -27,6 +28,7 @@ async def run(dut, stores, head, ld_tail, ld_addr, ld_bytes):
         bytes_flat |= ben << (4 * slot)
         data_flat |= data << (32 * slot)
     dut.sq_valid.value = valid
+    dut.sq_addr_valid.value = valid & ~sum(1 << s for s in unknown)
     dut.sq_word_addr_flat.value = addr_flat
     dut.sq_bytes_accessed_flat.value = bytes_flat
     dut.sq_write_data_flat.value = data_flat
@@ -122,3 +124,34 @@ async def test_wraparound_excludes_younger(dut):
               0: (0x200, 0b0001, replicate(0x33, 1))}
     data, _, _ = await run(dut, stores, 6, 8, 0x200, 0b0001)
     assert data & 0xFF == 0x22, f"got byte {data & 0xFF:#x}"
+
+
+
+@cocotb.test()
+async def test_older_unknown_store_stalls(dut):
+    """An older store with no address yet: the load must stall, and nothing forwards from it."""
+    stores = {0: (0x100, 0xF, 0xDEADBEEF)}        # address not real yet (not issued)
+    data, from_store, _ = await run(dut, stores, 0, 1, 0x100, 0xF, unknown=(0,))
+    assert int(dut.sq_stall.value) == 1, "load did not stall on an older unknown store"
+    assert from_store == 0, "forwarded from a store whose address is not known"
+    assert data == CACHE
+
+
+@cocotb.test()
+async def test_younger_unknown_store_no_stall(dut):
+    """A younger store with no address must not stall the load."""
+    stores = {0: (0x100, 0b0001, replicate(0x55, 1)),
+              1: (0x300, 0xF, 0)}                 # slot 1 is younger and not issued
+    data, _, _ = await run(dut, stores, 0, 1, 0x100, 0b0001, unknown=(1,))
+    assert int(dut.sq_stall.value) == 0, "stalled on a younger store"
+    assert data & 0xFF == 0x55, f"got byte {data & 0xFF:#x}"
+
+
+@cocotb.test()
+async def test_unknown_store_stalls_across_wrap(dut):
+    """Head at slot 6, older stores in 6, 7, 0; slot 7 has no address -> stall."""
+    stores = {6: (0x200, 0b0001, replicate(0x11, 1)),
+              7: (0x200, 0b0001, replicate(0x22, 1)),
+              0: (0x200, 0b0001, replicate(0x33, 1))}
+    await run(dut, stores, 6, 9, 0x200, 0b0001, unknown=(7,))
+    assert int(dut.sq_stall.value) == 1, "missed an unknown older store across the wrap"

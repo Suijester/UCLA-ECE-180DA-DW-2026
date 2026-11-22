@@ -10,6 +10,7 @@ module store_forward_tb_wrapper
 
     input logic [$clog2(SQ_SIZE):0] sq_head,
     input logic [SQ_SIZE-1:0] sq_valid,
+    input logic [SQ_SIZE-1:0] sq_addr_valid,
     input logic [SQ_SIZE*XLEN-1:0] sq_word_addr_flat,
     input logic [SQ_SIZE*4-1:0] sq_bytes_accessed_flat,
     input logic [SQ_SIZE*XLEN-1:0] sq_write_data_flat,
@@ -18,7 +19,8 @@ module store_forward_tb_wrapper
 
     output logic [XLEN-1:0] fwd_data,
     output logic [3:0] fwd_bytes_from_store,
-    output logic fwd_all_from_store
+    output logic fwd_all_from_store,
+    output logic sq_stall
 );
 
     logic [XLEN-1:0] word_addr_arr [SQ_SIZE];
@@ -39,13 +41,15 @@ module store_forward_tb_wrapper
         .ld_sq_tail(ld_sq_tail),
         .sq_head(sq_head),
         .sq_valid(sq_valid),
+        .sq_addr_valid(sq_addr_valid),
         .sq_word_addr(word_addr_arr),
         .sq_bytes_accessed(bytes_arr),
         .sq_write_data(data_arr),
         .cache_read_data(cache_read_data),
         .fwd_data(fwd_data),
         .fwd_bytes_from_store(fwd_bytes_from_store),
-        .fwd_all_from_store(fwd_all_from_store)
+        .fwd_all_from_store(fwd_all_from_store),
+        .sq_stall(sq_stall)
     );
 
 endmodule

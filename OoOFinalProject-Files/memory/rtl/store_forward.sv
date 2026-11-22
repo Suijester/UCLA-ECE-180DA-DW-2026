@@ -29,6 +29,7 @@ module store_forward (
     // store queue view: store_queue sq_* outputs
     input st_ptr_t sq_head,
     input logic [SQ_SIZE-1:0] sq_valid,
+    input logic [SQ_SIZE-1:0] sq_addr_valid,          // store's address/data filled at issue
     input logic [XLEN-1:0] sq_word_addr [SQ_SIZE],
     input logic [3:0] sq_bytes_accessed [SQ_SIZE],
     input logic [XLEN-1:0] sq_write_data [SQ_SIZE],
@@ -39,7 +40,10 @@ module store_forward (
     // result (to load_result for extract / extend)
     output logic [XLEN-1:0] fwd_data,
     output logic [3:0] fwd_bytes_from_store,          // which bytes came from a store
-    output logic fwd_all_from_store                   // every needed byte forwarded: cache not needed
+    output logic fwd_all_from_store,                 // every needed byte forwarded: cache not needed
+    // conservative disambiguation: an older store has no address yet, so the
+    // load can't tell whether it depends on it -> the load must wait
+    output logic sq_stall
 );
 
     localparam int SQ_IDX_BITS = $clog2(SQ_SIZE);
@@ -70,7 +74,7 @@ module store_forward (
     always_comb begin : FIND_BYTE_MATCHES
         for (int i = 0; i < SQ_SIZE; i++) begin
             for (int b = 0; b < 4; b++) begin
-                byte_match[i][b] = older[i]
+                 byte_match[i][b] = older[i] && sq_addr_valid[i]
                                 && (sq_word_addr[i] == ld_word_addr)
                                 && sq_bytes_accessed[i][b]
                                 && ld_bytes_accessed[b];
@@ -99,11 +103,8 @@ module store_forward (
         fwd_all_from_store = ((fwd_bytes_from_store & ld_bytes_accessed) == ld_bytes_accessed);
     end
 
-    // NOTE (stage 3): in stages 1-2 every store's address is known at allocation,
-    //   so every older store can be checked here. With dispatch-time allocation, a
-    //   load must also wait (CONSERVATIVE) or be checked later (speculative modes)
-    //   for older stores whose address is not yet known; that check belongs in
-    //   load_queue.
+    // 4. conservative: stall while any older store's address is still unknown
+    assign sq_stall = |(older & ~sq_addr_valid);
     // NOTE: a store keeps forwarding until L1 confirms its write (drain hit),
     //   so a load never misses its bytes while the store is in flight to L1.
 
