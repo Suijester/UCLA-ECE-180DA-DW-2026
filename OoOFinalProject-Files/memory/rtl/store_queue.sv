@@ -3,33 +3,41 @@ import rv32_ooo_pkg::*;
 
 // store queue (retired entries at the head are the store buffer)
 //
-// build stages 1-2:
-//   - entries are allocated at ISSUE; address + data arrive in the same cycle
-//     from address_gen, so an entry is resolved as soon as it is allocated
-//   - the backend issues memory ops in program order, so allocation order
-//     equals program order (age = position from the head, NOT rob_tag)
+// conservative disambiguation:
+//   - entries are allocated at DISPATCH, in program order (one store per cycle)
+//   - address + data are filled at ISSUE (any order), found by ROB tag
+//   - age = position from the head (NOT rob_tag)
+//   - store_forward raises sq_stall while any store older than a load has no
+//     address yet, so a load never reads past an unknown store
 //
 // lifecycle of an entry:
-//   allocate (tail) -> complete to ROB -> retire (ROB head moved past it)
-//   -> drain to L1 from the head, in order -> free on an L1 hit
+//   dispatch (tail) -> issue fills address/data, completes to the ROB
+//   -> retire (ROB head moved past it) -> drain to L1 from the head, in order
+//   -> free on an L1 hit
 //   a drain that misses L1 waits for the MSHR to fill the line, then retries
 //   a mispredict frees every unretired entry with under_branch set
 module store_queue (
     input logic clk,
     input logic rst_n,
 
-    // allocate (from memory_top, fed by address_gen)
-    input logic alloc_valid,
-    output logic alloc_ready,                         // low when full
-    input rob_tag_t alloc_rob_tag,
-    input logic alloc_under_branch,                   // issue_uop.under_unresolved_branch
-    input logic [XLEN-1:0] alloc_word_addr,           // address_gen.word_addr
-    input logic [3:0] alloc_bytes_accessed,           // address_gen.bytes_accessed
-    input logic [XLEN-1:0] alloc_write_data,          // address_gen.store_data (copied into every lane)
-    output st_ptr_t alloc_st_ptr,                     // slot this store got (store_sets disp_st_ptr)
+    // dispatch (same shape as load_queue: one instruction per cycle)
+    input logic disp_valid,                           // a store is dispatching
+    input renamed_uop_t disp_inst,
+    output logic disp_ready,                          // low when full (backend stalls dispatch)
+    output st_ptr_t disp_st_ptr,                      // slot this store gets (store_sets, later)
 
-    // completion to the ROB (load_result builds execution_result_t, writeback_valid = 0)
+    // issue (from address_gen): fill the entry with this ROB tag
+    input logic issue_valid,
+    output logic issue_ready,
+    input rob_tag_t issue_rob_tag,
+    input logic [XLEN-1:0] issue_word_addr,           // address_gen.word_addr
+    input logic [3:0] issue_bytes_accessed,           // address_gen.bytes_accessed
+    input logic [XLEN-1:0] issue_write_data,          // address_gen.store_data (copied into every lane)
+
+    // completion to the ROB, valid/ready: held constant until comp_ready
+    // (load_result packs execution_result_t with writeback_valid = 0)
     output logic comp_valid,
+    input logic comp_ready,
     output rob_tag_t comp_rob_tag,
     output logic comp_under_branch,
 
@@ -43,6 +51,7 @@ module store_queue (
     output st_ptr_t sq_head,
     output st_ptr_t sq_tail,                          // a new load records this: its older stores are head..tail-1
     output logic [SQ_SIZE-1:0] sq_valid,
+    output logic [SQ_SIZE-1:0] sq_addr_valid,         // address/data filled at issue
     output logic [XLEN-1:0] sq_word_addr [SQ_SIZE],
     output logic [3:0] sq_bytes_accessed [SQ_SIZE],
     output logic [XLEN-1:0] sq_write_data [SQ_SIZE],
@@ -68,6 +77,7 @@ module store_queue (
     output logic sq_empty,                            // feeds be.busy: retired stores not yet in L1
     output logic sq_full
 );
+
 
     localparam int SQ_IDX_BITS = $clog2(SQ_SIZE);
 
@@ -110,23 +120,49 @@ module store_queue (
     assign survivors = st_ptr_t'($countones(sq_valid & ~sq_squash_mask));
 
     // ---------------------------------------------------------------------
-    // allocate (a store on the mispredicted path arriving with the squash is dropped)
+    // dispatch: take the tail entry, address not known yet
+    //   (a store on the mispredicted path arriving with the squash is dropped)
     // ---------------------------------------------------------------------
-    logic alloc_fire, alloc_keep;
-    st_ptr_t alloc_ptr;
-    st_idx_t alloc_idx;
+    logic disp_fire, disp_keep, disp_under_branch;
+    st_ptr_t disp_ptr;
+    st_idx_t disp_idx;
 
-    assign alloc_ready = !sq_full;
-    assign alloc_fire = alloc_valid && alloc_ready;
-    assign alloc_keep = alloc_fire && !(br_squash && alloc_under_branch);
-    assign alloc_ptr = br_squash ? (head + survivors) : tail;
-    assign alloc_idx = alloc_ptr[SQ_IDX_BITS-1:0];
-    assign alloc_st_ptr = alloc_ptr;
+    assign disp_under_branch = disp_inst.under_unresolved_branch;
+    assign disp_ready = !sq_full;
+    assign disp_fire = disp_valid && disp_ready;
+    assign disp_keep = disp_fire && !(br_squash && disp_under_branch);
+    assign disp_ptr = br_squash ? (head + survivors) : tail;
+    assign disp_idx = disp_ptr[SQ_IDX_BITS-1:0];
+    assign disp_st_ptr = disp_ptr;
 
-    // completion: one pulse when the store is captured (none for a dropped store)
-    assign comp_valid = alloc_keep;
-    assign comp_rob_tag = alloc_rob_tag;
-    assign comp_under_branch = alloc_under_branch && !br_correct;
+    // ---------------------------------------------------------------------
+    // issue: find the entry with this ROB tag and fill its address and data
+    //   accepted only if the completion register is free (or being emptied)
+    // ---------------------------------------------------------------------
+    logic issue_found;
+    st_idx_t issue_idx;
+
+    always_comb begin : SQ_FIND_ISSUE
+        issue_found = 1'b0;
+        issue_idx = '0;
+        for (int i = 0; i < SQ_SIZE; i++) begin
+            if (sq_valid[i] && !sq_addr_valid[i] && (sq_rob_tag[i] == issue_rob_tag)) begin
+                issue_found = 1'b1;
+                issue_idx = st_idx_t'(i);
+            end
+        end
+    end
+
+    logic issue_fire, issue_keep;
+    assign issue_ready = issue_found && (!comp_valid || comp_ready);
+    assign issue_fire = issue_valid && issue_ready;
+    assign issue_keep = issue_fire && !sq_squash_mask[issue_idx];   // squashed this cycle: drop it
+
+    // ---------------------------------------------------------------------
+    // completion: registered, held until load_result takes it
+    // ---------------------------------------------------------------------
+    logic comp_fire;
+    assign comp_fire = comp_valid && comp_ready;
 
     // ---------------------------------------------------------------------
     // retirement: a store has retired once the ROB head has moved past it
@@ -134,6 +170,7 @@ module store_queue (
     //                                 1..16         head is past it -> retired
     //                                 larger        store is still ahead of the head
     //   checked every cycle and latched, so a later tag wrap can't undo it
+        //   (the ROB only retires completed stores, so a retired entry is always filled)
     // ---------------------------------------------------------------------
     logic [SQ_SIZE-1:0] retire_now;
     rob_tag_flat_t head_dist [SQ_SIZE];
@@ -141,7 +178,7 @@ module store_queue (
     always_comb begin : SQ_RETIRE_DETECT
         for (int i = 0; i < SQ_SIZE; i++) begin
             head_dist[i] = rob_tag_distance(rob_head_tag, sq_rob_tag[i]);
-            retire_now[i] = sq_valid[i] && !sq_retired[i]
+            retire_now[i] = sq_valid[i] && sq_addr_valid[i] && !sq_retired[i]
                          && (head_dist[i] != '0)
                          && (head_dist[i] <= rob_tag_flat_t'(ROB_ENTRY_COUNT));
         end
@@ -170,6 +207,19 @@ module store_queue (
     assign drain_miss = drain_pending && drain_resp_valid && !drain_resp_hit && (drain_resp_st_id == head_idx);
     assign head_wake = wake_valid && (wake_line_addr == head_line);
 
+    
+    // payload storage (no reset needed: only read when sq_valid / sq_addr_valid is set)
+    always_ff @(posedge clk) begin : SQ_PAYLOAD
+        if (disp_keep) begin
+            sq_rob_tag[disp_idx] <= disp_inst.rob_tag;
+        end
+        if (issue_keep) begin
+            sq_word_addr[issue_idx] <= issue_word_addr;
+            sq_bytes_accessed[issue_idx] <= issue_bytes_accessed;
+            sq_write_data[issue_idx] <= issue_write_data;
+        end
+    end
+    
     // ---------------------------------------------------------------------
     // control state
     // ---------------------------------------------------------------------
@@ -178,8 +228,12 @@ module store_queue (
             head <= '0;
             tail <= '0;
             sq_valid <= '0;
+            sq_addr_valid <= '0;
             sq_retired <= '0;
             sq_under_branch <= '0;
+            comp_valid <= 1'b0;
+            comp_rob_tag <= '0;
+            comp_under_branch <= 1'b0;
             drain_pending <= 1'b0;
             wait_wake <= 1'b0;
             wake_seen <= 1'b0;
@@ -198,16 +252,31 @@ module store_queue (
                 sq_under_branch <= '0;
             end
 
-            // 3. allocate (after the squash so it lands at the rolled-back tail)
-            if (alloc_keep) begin
-                sq_valid[alloc_idx] <= 1'b1;
-                sq_retired[alloc_idx] <= 1'b0;
-                sq_under_branch[alloc_idx] <= alloc_under_branch && !br_correct;
-                tail <= alloc_ptr + 1'b1;
+            // 3. dispatch (after the squash so it lands at the rolled-back tail)
+            if (disp_keep) begin
+                sq_valid[disp_idx] <= 1'b1;
+                sq_addr_valid[disp_idx] <= 1'b0;
+                sq_retired[disp_idx] <= 1'b0;
+                sq_under_branch[disp_idx] <= disp_under_branch && !br_correct;
+                tail <= disp_ptr + 1'b1;
             end
 
-            // 4. drain handshake with L1 (the head entry is retired, so a squash never touches it)
-                        // 4. drain handshake with L1 (the head entry is retired, so a squash never touches it)
+            // 4. issue: address/data are now known
+            if (issue_keep) begin
+                sq_addr_valid[issue_idx] <= 1'b1;
+            end
+
+            // 5. completion: valid/ready handshake. Once comp_valid is up, it and
+            //    its fields stay constant until load_result takes it (comp_ready)
+            if (issue_keep) begin
+                comp_valid <= 1'b1;
+                comp_rob_tag <= issue_rob_tag;
+                comp_under_branch <= sq_under_branch[issue_idx] && !br_correct;
+            end else if (comp_fire) begin
+                comp_valid <= 1'b0;
+            end
+
+            // 6. drain handshake with L1 (the head entry is retired, so a squash never touches it)
             if (drain_fire) drain_pending <= 1'b1;
 
             if (drain_hit) begin
@@ -215,7 +284,7 @@ module store_queue (
                 head <= head + 1'b1;
                 drain_pending <= 1'b0;
             end
-            
+
             // listen for the head line's wake from the moment the request is sent:
             // remember a wake seen in the send cycle or while waiting for the response
             if (drain_fire) begin
@@ -224,7 +293,7 @@ module store_queue (
                 wake_seen <= 1'b1;
             end
 
-             // a miss waits for the fill, unless its wake already came (earlier in
+            // a miss waits for the fill, unless its wake already came (earlier in
             // flight, or in this same cycle): then retry straight away
             if (drain_miss) begin
                 drain_pending <= 1'b0;
@@ -237,16 +306,6 @@ module store_queue (
             if (drain_hit) begin
                 wake_seen <= 1'b0;
             end
-        end
-    end
-
-    // payload storage (no reset needed: only read when sq_valid is set)
-    always_ff @(posedge clk) begin : SQ_PAYLOAD
-        if (alloc_keep) begin
-            sq_rob_tag[alloc_idx] <= alloc_rob_tag;
-            sq_word_addr[alloc_idx] <= alloc_word_addr;
-            sq_bytes_accessed[alloc_idx] <= alloc_bytes_accessed;
-            sq_write_data[alloc_idx] <= alloc_write_data;
         end
     end
 

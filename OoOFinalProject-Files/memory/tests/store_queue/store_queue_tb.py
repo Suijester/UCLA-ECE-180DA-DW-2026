@@ -1,5 +1,8 @@
 """cocotb tests for store_queue.sv
 
+A store is dispatched (takes an entry, no address yet), then issued (address
+and data filled, completion sent). alloc() does both back to back.
+
 Timing convention: inputs change right after a falling edge; outputs are
 checked 1 ns later (combinational logic settled, state from the last rising edge).
 """
@@ -20,12 +23,15 @@ def line_of(word_addr):
 
 
 def idle_inputs(dut):
-    dut.alloc_valid.value = 0
-    dut.alloc_rob_tag.value = 0
-    dut.alloc_under_branch.value = 0
-    dut.alloc_word_addr.value = 0
-    dut.alloc_bytes_accessed.value = 0
-    dut.alloc_write_data.value = 0
+    dut.disp_valid.value = 0
+    dut.disp_rob_tag.value = 0
+    dut.disp_under_branch.value = 0
+    dut.issue_valid.value = 0
+    dut.issue_rob_tag.value = 0
+    dut.issue_word_addr.value = 0
+    dut.issue_bytes_accessed.value = 0
+    dut.issue_write_data.value = 0
+    dut.comp_ready.value = 1
     dut.br_resolve_valid.value = 0
     dut.br_mispredict.value = 0
     dut.drain_ready.value = 0
@@ -57,21 +63,38 @@ async def setup(dut):
     await settle()
 
 
-async def alloc(dut, rob_index, addr, data, bytes_en=0xF, under_branch=0):
-    """Allocate one store; checks it is accepted and completes the same cycle."""
-    dut.alloc_valid.value = 1
-    dut.alloc_rob_tag.value = tag(rob_index)
-    dut.alloc_word_addr.value = addr
-    dut.alloc_write_data.value = data
-    dut.alloc_bytes_accessed.value = bytes_en
-    dut.alloc_under_branch.value = under_branch
+async def dispatch(dut, rob_index, under_branch=0):
+    """Dispatch one store: it takes the tail entry, with no address yet."""
+    dut.disp_valid.value = 1
+    dut.disp_rob_tag.value = tag(rob_index)
+    dut.disp_under_branch.value = under_branch
     await settle()
-    assert dut.alloc_ready.value == 1, "store queue refused an allocation"
-    assert dut.comp_valid.value == 1, "no completion sent for an accepted store"
-    assert int(dut.comp_rob_tag.value) == tag(rob_index), "completion carries the wrong ROB tag"
+    assert dut.disp_ready.value == 1, "store queue refused a dispatch"
     await tick(dut)
-    dut.alloc_valid.value = 0
+    dut.disp_valid.value = 0
     await settle()
+
+
+async def issue(dut, rob_index, addr, data, bytes_en=0xF):
+    """Issue one store: fills its entry, and its completion appears next cycle."""
+    dut.issue_valid.value = 1
+    dut.issue_rob_tag.value = tag(rob_index)
+    dut.issue_word_addr.value = addr
+    dut.issue_write_data.value = data
+    dut.issue_bytes_accessed.value = bytes_en
+    await settle()
+    assert dut.issue_ready.value == 1, "store queue refused an issue"
+    await tick(dut)
+    dut.issue_valid.value = 0
+    await settle()
+    assert dut.comp_valid.value == 1, "no completion for an issued store"
+    assert int(dut.comp_rob_tag.value) == tag(rob_index), "completion carries the wrong ROB tag"
+
+
+async def alloc(dut, rob_index, addr, data, bytes_en=0xF, under_branch=0):
+    """Dispatch a store, then issue it right away."""
+    await dispatch(dut, rob_index, under_branch)
+    await issue(dut, rob_index, addr, data, bytes_en)
 
 
 async def drain_one(dut, expect_addr, expect_data, hit=True):
@@ -101,22 +124,22 @@ async def test_reset_state(dut):
     await setup(dut)
     assert dut.sq_empty.value == 1
     assert dut.sq_full.value == 0
-    assert dut.alloc_ready.value == 1
+    assert dut.disp_ready.value == 1
     assert dut.drain_valid.value == 0
+    assert dut.comp_valid.value == 0
 
 
 @cocotb.test()
 async def test_fill_to_full(dut):
-    """Eight allocations fill the queue; the ninth is refused."""
+    """Eight dispatches fill the queue; the ninth is refused."""
     await setup(dut)
     for i in range(SQ_SIZE):
-        await alloc(dut, i, 0x100 + 4 * i, i)
+        await dispatch(dut, i)
     assert dut.sq_full.value == 1
-    dut.alloc_valid.value = 1
+    dut.disp_valid.value = 1
     await settle()
-    assert dut.alloc_ready.value == 0, "accepted a store while full"
-    assert dut.comp_valid.value == 0, "completed a store it did not accept"
-    dut.alloc_valid.value = 0
+    assert dut.disp_ready.value == 0, "accepted a store while full"
+    dut.disp_valid.value = 0
 
 
 @cocotb.test()
@@ -347,3 +370,67 @@ async def test_other_line_wake_in_flight_ignored(dut):
     await settle()
     await drain_one(dut, 0xC00, 0xC0, hit=True)
     assert dut.sq_empty.value == 1
+
+@cocotb.test()
+async def test_dispatch_then_issue_fills_entry(dut):
+    """After dispatch the entry has no address and no completion; issue fills it."""
+    await setup(dut)
+    await dispatch(dut, 0)
+    assert int(dut.sq_valid.value) == 0b1
+    assert int(dut.sq_addr_valid.value) == 0, "address marked known before issue"
+    assert dut.comp_valid.value == 0, "completed before issue"
+    dut.issue_valid.value = 1                        # a tag that is not in the queue
+    dut.issue_rob_tag.value = tag(5)
+    await settle()
+    assert dut.issue_ready.value == 0, "accepted an issue for an unknown ROB tag"
+    dut.issue_valid.value = 0
+    await issue(dut, 0, 0xE00, 0xE0)
+    assert int(dut.sq_addr_valid.value) == 0b1
+
+
+@cocotb.test()
+async def test_out_of_order_issue_drains_in_order(dut):
+    """Stores may issue in any order, but still drain in program order."""
+    await setup(dut)
+    for rob in range(3):
+        await dispatch(dut, rob)
+    await issue(dut, 2, 0xF08, 0x32)                 # youngest issues first
+    await issue(dut, 0, 0xF00, 0x30)
+    assert int(dut.sq_addr_valid.value) == 0b101, "wrong entries filled"
+    await issue(dut, 1, 0xF04, 0x31)
+    dut.rob_head_tag.value = tag(3)                  # all three retire
+    await tick(dut)
+    await settle()
+    await drain_one(dut, 0xF00, 0x30)
+    await drain_one(dut, 0xF04, 0x31)
+    await drain_one(dut, 0xF08, 0x32)
+    assert dut.sq_empty.value == 1
+
+
+@cocotb.test()
+async def test_completion_held_until_ready(dut):
+    """comp_valid and its ROB tag stay constant until comp_ready; no new issue meanwhile."""
+    await setup(dut)
+    await dispatch(dut, 0)
+    await dispatch(dut, 1)
+    dut.comp_ready.value = 0                         # load_result's queue is full
+    await issue(dut, 0, 0x1000, 0x10)
+    dut.issue_valid.value = 1                        # store 1 tries to issue
+    dut.issue_rob_tag.value = tag(1)
+    dut.issue_word_addr.value = 0x1004
+    dut.issue_write_data.value = 0x11
+    dut.issue_bytes_accessed.value = 0xF
+    for _ in range(3):
+        await settle()
+        assert dut.comp_valid.value == 1, "dropped the completion before it was taken"
+        assert int(dut.comp_rob_tag.value) == tag(0), "completion changed while waiting"
+        assert dut.issue_ready.value == 0, "accepted an issue while a completion waits"
+        await tick(dut)
+    dut.comp_ready.value = 1                         # taken this cycle; store 1 can issue now
+    await settle()
+    assert dut.issue_ready.value == 1, "issue not accepted in the handshake cycle"
+    await tick(dut)
+    dut.issue_valid.value = 0
+    await settle()
+    assert dut.comp_valid.value == 1
+    assert int(dut.comp_rob_tag.value) == tag(1), "second completion has the wrong tag"
