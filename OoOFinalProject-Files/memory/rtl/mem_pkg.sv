@@ -78,6 +78,8 @@ package mem_pkg;
         logic [3:0] byte_mask;
         logic [1:0] byte_offset;
         logic load_unsigned;
+        phys_reg_t       writeback_pdst;
+        logic            under_unresolved_branch;
         
         mem_size_e mem_size;
         logic executed;
@@ -97,4 +99,7 @@ package mem_pkg;
         logic l1_retry;
 
     } lq_entry_t;
+
 endpackage
+
+

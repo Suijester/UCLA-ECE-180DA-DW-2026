@@ -22,7 +22,7 @@ module load_queue (
 
     //from retire
     input logic retire_valid,
-    input rob_retire_data_t retire_rob_inst,
+    input rob_tag_t retire_rob_tag,
 
     //from store_queue
     input st_ptr_t sq_tail,
@@ -49,6 +49,8 @@ module load_queue (
     output mem_size_e load_out_mem_size,
     output logic [1:0] load_out_byte_offset,
     output logic load_out_unsigned,
+    output logic load_out_under_unresolved_branch,
+    output phys_reg_t load_out_writeback_pdst,
 
     //to L1 cache
     output logic l1_req_valid,
@@ -84,7 +86,7 @@ assign empty = count == 0;
 
 assign disp_ready = !full;
 assign dispatch_fire = disp_valid && disp_ready;
-assign retire_fire = retire_valid && !empty && lq[head].valid && (lq[head].rob_tag == retire_rob_inst.rob_tag) && lq[head].executed;
+assign retire_fire = retire_valid && !empty && lq[head].valid && (lq[head].rob_tag == retire_rob_tag) && lq[head].executed;
 
 //pass oldest eligible load to sq for dependency checking
 assign check_valid = check_found;
@@ -118,6 +120,8 @@ always_ff @ (posedge clk or negedge rst_n) begin
             lq[tail].byte_offset <= 'b0;
             lq[tail].mem_size <= disp_inst.decoded.mem_size;
             lq[tail].load_unsigned <= disp_inst.decoded.load_unsigned;
+            lq[tail].writeback_pdst <= disp_inst.pdst;
+            lq[tail].under_unresolved_branch <= disp_inst.under_unresolved_branch;
             lq[tail].executed <= 'b0; 
             lq[tail].sq_checked <= 'b0;
             lq[tail].l1_waiting <= 'b0;
@@ -289,6 +293,8 @@ always_comb begin: assign_results
     load_out_mem_size = mem_size_e'('0);
     load_out_byte_offset = '0;
     load_out_unsigned = 1'b0;
+    load_out_under_unresolved_branch = 'b0;
+    load_out_writeback_pdst = 'b0;
 
     if (selected_result_valid) begin
         load_out = lq[selected_result_idx].result_data;
@@ -297,6 +303,8 @@ always_comb begin: assign_results
         load_out_mem_size = lq[selected_result_idx].mem_size;
         load_out_byte_offset = lq[selected_result_idx].byte_offset;
         load_out_unsigned = lq[selected_result_idx].load_unsigned;
+        load_out_under_unresolved_branch = lq[selected_result_idx].under_unresolved_branch;
+        load_out_writeback_pdst = lq[selected_result_idx].writeback_pdst;
     end
 end
 
