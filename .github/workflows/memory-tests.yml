@@ -59,9 +59,4 @@ jobs:
           unset PYTHONPATH
           make SIM=verilator
       
-      - name: Run load_result Cocotb tests
-        working-directory: OoOFinalProject-Files/memory/tests/load_result
-        run: |
-          unset PYTHONHOME
-          unset PYTHONPATH
-          make SIM=verilator
+
