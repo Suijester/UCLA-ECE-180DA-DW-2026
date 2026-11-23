@@ -1,4 +1,3 @@
-
 import rv32_ooo_pkg::*;
 import mem_pkg::*;
 
@@ -70,6 +69,10 @@ module load_queue_tb_wrapper (
     input logic wake_valid,
     input line_addr_t wake_line_addr,
 
+    // New LQ status outputs
+    output logic full,
+    output logic empty,
+
     // Debug signals
     output lq_idx_t dbg_head, dbg_tail,
     output logic [$clog2(LQ_SIZE):0] dbg_count,
@@ -95,12 +98,10 @@ module load_queue_tb_wrapper (
         .clk(clk),
         .rst_n(rst_n),
 
-        // Dispatch
         .disp_valid(disp_valid),
         .disp_inst(disp_inst),
         .disp_ready(disp_ready),
 
-        // Issue / AGU
         .word_addr(word_addr),
         .byte_offset(byte_offset),
         .bytes_accessed(bytes_accessed),
@@ -109,14 +110,11 @@ module load_queue_tb_wrapper (
         .issue_valid(issue_valid),
         .issue_ready(issue_ready),
 
-        // Retirement
         .retire_valid(retire_valid),
         .retire_rob_tag(rob_tag_t'(retire_rob_tag)),
 
-        // Store queue
         .sq_tail(sq_tail),
 
-        // Store forwarding
         .check_valid(check_valid),
         .check_addr(check_addr),
         .check_byte_mask(check_byte_mask),
@@ -126,7 +124,6 @@ module load_queue_tb_wrapper (
         .fwd_all_from_store(fwd_all_from_store),
         .sq_stall(sq_stall),
 
-        // Load completion
         .load_out(load_out),
         .load_out_valid(load_out_valid),
         .load_out_ready(load_out_ready),
@@ -137,30 +134,28 @@ module load_queue_tb_wrapper (
         .load_out_under_unresolved_branch(load_out_under_unresolved_branch),
         .load_out_writeback_pdst(load_out_writeback_pdst),
 
-        // L1 request
         .l1_req_valid(l1_req_valid),
         .l1_req_addr(l1_req_addr),
         .l1_req_ready(l1_req_ready),
         .l1_req_byte_mask(l1_req_byte_mask),
         .l1_req_ld_id(l1_req_ld_id),
 
-        // L1 response
         .l1_resp_valid(l1_resp_valid),
         .l1_resp_hit(l1_resp_hit),
         .l1_resp_ld_id(l1_resp_ld_id),
         .l1_resp_data(l1_resp_data),
 
-        // MSHR wakeup
         .wake_valid(wake_valid),
-        .wake_line_addr(wake_line_addr)
+        .wake_line_addr(wake_line_addr),
+
+        .full(full),
+        .empty(empty)
     );
 
-    // Debug: queue state
     assign dbg_head = dut.head;
     assign dbg_tail = dut.tail;
     assign dbg_count = dut.count;
 
-    // Debug: individual entries
     for (genvar i = 0; i < LQ_SIZE; i++) begin : debug_entries
         assign dbg_valid[i] = dut.lq[i].valid;
         assign dbg_addr_valid[i] = dut.lq[i].addr_valid;
@@ -170,6 +165,6 @@ module load_queue_tb_wrapper (
         assign dbg_result_pending[i] = dut.lq[i].result_pending;
     end
 
-    assign dbg_result_data = dut.lq[dut.result_idx].result_data;
+    assign dbg_result_data = dut.lq[dut.selected_result_idx].result_data;
 
 endmodule
