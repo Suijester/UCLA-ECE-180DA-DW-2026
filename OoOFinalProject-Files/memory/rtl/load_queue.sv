@@ -67,14 +67,16 @@ module load_queue (
 
     //mshr wakeup
     input logic wake_valid,
-    input line_addr_t wake_line_addr
+    input line_addr_t wake_line_addr,
+
+    output logic full,
+    output logic empty
 
 );
 
 lq_entry_t lq [LQ_SIZE];
 lq_idx_t head, tail;
 logic [$clog2(LQ_SIZE):0] count, count_d;
-logic full, empty;
 
 logic dispatch_fire, retire_fire;
 
@@ -83,6 +85,7 @@ lq_idx_t held_req_idx;
 
 assign full = count == LQ_SIZE;
 assign empty = count == 0;
+
 
 assign disp_ready = !full;
 assign dispatch_fire = disp_valid && disp_ready;
@@ -413,5 +416,4 @@ always_comb begin: find_mshr_wakeup
 end
 
 endmodule
-
 
