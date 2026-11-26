@@ -96,8 +96,8 @@ jobs:
           make SIM=verilator
           ! grep -q "<failure" results.xml
         
-      # 11. Run memory_top tests
-      - name: Run store_sets Cocotb tests
+      # 12. Run memory_top tests
+      - name: Run memory_top Cocotb tests
         working-directory: OoOFinalProject-Files/memory/tests/memory_top
         run: |
           unset PYTHONHOME
